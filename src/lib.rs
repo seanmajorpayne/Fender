@@ -10,6 +10,7 @@ use wasm_bindgen::prelude::*;
 #[cfg(target_arch="wasm32")]
 #[wasm_bindgen(start)]
 pub fn run_web() -> Result<(), wasm_bindgen::JsValue> {
+    wgpu::web_sys::console::log_1(&"Rust WASM run_web() starting".into());
     console_error_panic_hook::set_once();
     run().unwrap_throw();
 
