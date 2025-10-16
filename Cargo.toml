@@ -28,3 +28,8 @@ web-sys = { version = "0.3", features = [
     "Window",
     "Element",
 ]}
+
+# There is some incompatibility with wasm-bindgen, wasm-pack or wgpu
+# For now, I'm using a simple workaround
+[package.metadata.wasm-pack.profile.release]
+wasm-opt = ["-Oz", "--enable-bulk-memory", "--enable-nontrapping-float-to-int"]
