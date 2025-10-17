@@ -1,4 +1,4 @@
-use std::sync::Arc;
+use std::{cmp, sync::Arc};
 
 use winit::{
     application::ApplicationHandler, event::*, event_loop::{ActiveEventLoop, EventLoop}, keyboard::{KeyCode, PhysicalKey}, window::Window
@@ -155,6 +155,7 @@ pub struct State {
     device: wgpu::Device,
     is_surface_configured: bool,
     queue: wgpu::Queue,
+    max_dim: u32, // Prevent panics in wgpu due to exceeded texture size
     surface: wgpu::Surface<'static>,
     window: Arc<Window>,
 }
@@ -199,23 +200,31 @@ impl State {
             .copied()
             .unwrap_or(surface_caps.formats[0]);
 
+        let max_dim = if cfg!(target_arch = "wasm32") {
+            // TODO: Should be able to fetch this dynamically
+            // For now hard clamping to the lowest value.
+            2048
+        } else {
+            adapter.limits().max_texture_dimension_2d
+        };
+
         let config = wgpu::SurfaceConfiguration {
             usage: wgpu::TextureUsages::RENDER_ATTACHMENT,
             format: surface_format,
-            width: size.width,
-            height: size.height,
+            width: size.width.min(max_dim),
+            height: size.height.min(max_dim),
             present_mode: surface_caps.present_modes[0],
             alpha_mode: surface_caps.alpha_modes[0],
             view_formats: vec![],
             desired_maximum_frame_latency: 2,
         };
 
-        
         Ok(Self {
             config,
             device,
             is_surface_configured: false,
             queue,
+            max_dim,
             surface,
             window,
         })
@@ -223,8 +232,8 @@ impl State {
 
     pub fn resize(&mut self, width: u32, height: u32) {
         if width > 0 && height > 0 {
-            self.config.width = width;
-            self.config.height = height;
+            self.config.width = cmp::min(width, self.max_dim);
+            self.config.height = cmp::min(height, self.max_dim);
             self.surface.configure(&self.device, &self.config);
             self.is_surface_configured = true;
         }
