@@ -145,12 +145,17 @@ impl ApplicationHandler<State> for App {
                     }, 
                 ..
             } => state.handle_key(event_loop, code, key_state.is_pressed()),
+            WindowEvent::CursorMoved {
+                position,
+                ..
+            } => state.handle_mouse_moved(&position),
             _ => {},
         }
     }
 }
 
 pub struct State {
+    color: wgpu::Color,
     config: wgpu::SurfaceConfiguration,
     device: wgpu::Device,
     is_surface_configured: bool,
@@ -220,6 +225,12 @@ impl State {
         };
 
         Ok(Self {
+            color: wgpu::Color {
+                r: 0.1,
+                g: 0.2,
+                b: 0.3,
+                a: 1.0,
+            },
             config,
             device,
             is_surface_configured: false,
@@ -236,6 +247,20 @@ impl State {
             self.config.height = cmp::min(height, self.max_dim);
             self.surface.configure(&self.device, &self.config);
             self.is_surface_configured = true;
+        }
+    }
+
+    fn handle_mouse_moved(&mut self, position: &winit::dpi::PhysicalPosition<f64>) {
+        if self.config.width > 0 && self.config.height > 0 {
+            let r = position.x / self.config.width as f64;
+            let g = position.y / self.config.height as f64;
+            
+            self.color = wgpu::Color{
+                r: r,
+                g: g,
+                b: 0.3,
+                a: 1.0,
+            }
         }
     }
 
@@ -272,12 +297,7 @@ impl State {
                     view: &view,
                     resolve_target: None,
                     ops: wgpu::Operations{
-                        load: wgpu::LoadOp::Clear(wgpu::Color{
-                            r: 0.1,
-                            g: 0.2,
-                            b: 0.3,
-                            a: 1.0,
-                        }),
+                        load: wgpu::LoadOp::Clear(self.color),
                         store: wgpu::StoreOp::Store,
                     },
                     depth_slice: None,
