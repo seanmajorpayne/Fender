@@ -161,7 +161,8 @@ pub struct State {
     is_surface_configured: bool,
     queue: wgpu::Queue,
     max_dim: u32, // Prevent panics in wgpu due to exceeded texture size
-    render_pipeline: wgpu::RenderPipeline,
+    render_pipelines: Vec<wgpu::RenderPipeline>,
+    pipeline_selection: usize,
     surface: wgpu::Surface<'static>,
     window: Arc<Window>,
 }
@@ -275,6 +276,44 @@ impl State {
             cache: None,
         });
 
+        let render_pipeline_two = device.create_render_pipeline(&wgpu::RenderPipelineDescriptor{
+            label: Some("render pipeline two"),
+            layout: Some(&render_pipeline_layout),
+            vertex: wgpu::VertexState {
+                module: &shader,
+                entry_point: Some("vs2_main"),
+                buffers: &[],
+                compilation_options: wgpu::PipelineCompilationOptions::default(),
+            },
+            fragment: Some(wgpu::FragmentState {
+                module: &shader,
+                entry_point: Some("fs_main"),
+                targets: &[Some(wgpu::ColorTargetState {
+                    format: config.format,
+                    blend: Some(wgpu::BlendState::REPLACE),
+                    write_mask: wgpu::ColorWrites::ALL,
+                })],
+                compilation_options: wgpu::PipelineCompilationOptions::default(),
+            }),
+            depth_stencil: None,
+            primitive: wgpu::PrimitiveState {
+                topology: wgpu::PrimitiveTopology::TriangleList,
+                front_face: wgpu::FrontFace::Ccw,
+                cull_mode: Some(wgpu::Face::Back),
+                strip_index_format: None,
+                unclipped_depth: false,
+                polygon_mode: wgpu::PolygonMode::Fill,
+                conservative: false,
+            },
+            multisample: wgpu::MultisampleState {
+                count: 1,
+                mask: !0,
+                alpha_to_coverage_enabled: false,
+            },
+            multiview: None,
+            cache: None,
+        });
+
         Ok(Self {
             color: wgpu::Color {
                 r: 0.1,
@@ -287,7 +326,8 @@ impl State {
             is_surface_configured: false,
             queue,
             max_dim,
-            render_pipeline,
+            render_pipelines: vec!(render_pipeline, render_pipeline_two),
+            pipeline_selection: 0,
             surface,
             window,
         })
@@ -316,9 +356,10 @@ impl State {
         }
     }
 
-    fn handle_key(&self, event_loop: &ActiveEventLoop, code: KeyCode, is_pressed: bool) {
+    fn handle_key(&mut self, event_loop: &ActiveEventLoop, code: KeyCode, is_pressed: bool) {
         match (code, is_pressed) {
             (KeyCode::Escape, true) => event_loop.exit(),
+            (KeyCode::Space, true) => self.pipeline_selection = 1 - self.pipeline_selection,
             _ => {},
         }
     }
@@ -359,7 +400,7 @@ impl State {
             timestamp_writes: None,
         });
 
-        render_pass.set_pipeline(&self.render_pipeline);
+        render_pass.set_pipeline(&self.render_pipelines[self.pipeline_selection]);
         render_pass.draw(0..3, 0..1);
         drop(render_pass);
 
