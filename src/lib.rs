@@ -161,6 +161,7 @@ pub struct State {
     is_surface_configured: bool,
     queue: wgpu::Queue,
     max_dim: u32, // Prevent panics in wgpu due to exceeded texture size
+    render_pipeline: wgpu::RenderPipeline,
     surface: wgpu::Surface<'static>,
     window: Arc<Window>,
 }
@@ -224,6 +225,56 @@ impl State {
             desired_maximum_frame_latency: 2,
         };
 
+        let shader = device.create_shader_module(wgpu::ShaderModuleDescriptor{
+            label: Some("shader"),
+            source: wgpu::ShaderSource::Wgsl(include_str!("shader.wgsl").into()),
+        });
+
+        let render_pipeline_layout =
+            device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor{
+                label: Some("render pipeline layout"),
+                bind_group_layouts: &[],
+                push_constant_ranges: &[],
+            });
+        
+        let render_pipeline = device.create_render_pipeline(&wgpu::RenderPipelineDescriptor{
+            label: Some("render pipeline"),
+            layout: Some(&render_pipeline_layout),
+            vertex: wgpu::VertexState {
+                module: &shader,
+                entry_point: Some("vs_main"),
+                buffers: &[],
+                compilation_options: wgpu::PipelineCompilationOptions::default(),
+            },
+            fragment: Some(wgpu::FragmentState {
+                module: &shader,
+                entry_point: Some("fs_main"),
+                targets: &[Some(wgpu::ColorTargetState {
+                    format: config.format,
+                    blend: Some(wgpu::BlendState::REPLACE),
+                    write_mask: wgpu::ColorWrites::ALL,
+                })],
+                compilation_options: wgpu::PipelineCompilationOptions::default(),
+            }),
+            primitive: wgpu::PrimitiveState {
+                topology: wgpu::PrimitiveTopology::TriangleList,
+                strip_index_format: None,
+                front_face: wgpu::FrontFace::Ccw,
+                cull_mode: Some(wgpu::Face::Back),
+                polygon_mode: wgpu::PolygonMode::Fill,
+                unclipped_depth: false,
+                conservative: false,
+            },
+            depth_stencil: None,
+            multisample: wgpu::MultisampleState {
+                count: 1,
+                mask: !0,
+                alpha_to_coverage_enabled: false,
+            },
+            multiview: None,
+            cache: None,
+        });
+
         Ok(Self {
             color: wgpu::Color {
                 r: 0.1,
@@ -236,6 +287,7 @@ impl State {
             is_surface_configured: false,
             queue,
             max_dim,
+            render_pipeline,
             surface,
             window,
         })
@@ -290,23 +342,26 @@ impl State {
             label: Some("Render Encoder"),
         });
 
-        {
-            let _render_pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor{
-                label: Some("Render Pass"),
-                color_attachments: &[Some(wgpu::RenderPassColorAttachment{
-                    view: &view,
-                    resolve_target: None,
-                    ops: wgpu::Operations{
-                        load: wgpu::LoadOp::Clear(self.color),
-                        store: wgpu::StoreOp::Store,
-                    },
-                    depth_slice: None,
-                })],
-                depth_stencil_attachment: None,
-                occlusion_query_set: None,
-                timestamp_writes: None,
-            });
-        }
+    
+        let mut render_pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor{
+            label: Some("Render Pass"),
+            color_attachments: &[Some(wgpu::RenderPassColorAttachment{
+                view: &view,
+                resolve_target: None,
+                ops: wgpu::Operations{
+                    load: wgpu::LoadOp::Clear(self.color),
+                    store: wgpu::StoreOp::Store,
+                },
+                depth_slice: None,
+            })],
+            depth_stencil_attachment: None,
+            occlusion_query_set: None,
+            timestamp_writes: None,
+        });
+
+        render_pass.set_pipeline(&self.render_pipeline);
+        render_pass.draw(0..3, 0..1);
+        drop(render_pass);
 
         self.queue.submit(std::iter::once(encoder.finish()));
         output.present();
