@@ -4,6 +4,8 @@ use winit::{
     application::ApplicationHandler, event::*, event_loop::{ActiveEventLoop, EventLoop}, keyboard::{KeyCode, PhysicalKey}, window::Window
 };
 
+use wgpu::util::DeviceExt;
+
 #[cfg(target_arch="wasm32")]
 use wasm_bindgen::prelude::*;
 
@@ -35,6 +37,40 @@ pub fn run() -> anyhow::Result<()> {
     event_loop.run_app(&mut app)?;
     Ok(())
 }
+
+#[repr(C)]
+#[derive(Copy, Clone, Debug, bytemuck::Pod, bytemuck::Zeroable)]
+struct Vertex {
+    position: [f32; 3],
+    color: [f32; 3],
+}
+
+impl Vertex {
+    fn desc() -> wgpu::VertexBufferLayout<'static> {
+        wgpu::VertexBufferLayout {
+            array_stride: std::mem::size_of::<Vertex>() as wgpu::BufferAddress,
+            attributes: &[
+                wgpu::VertexAttribute {
+                    offset: 0,
+                    shader_location: 0,
+                    format: wgpu::VertexFormat::Float32x3,
+                },
+                wgpu::VertexAttribute {
+                    offset: std::mem::size_of::<[f32; 3]>() as wgpu::BufferAddress,
+                    shader_location: 1,
+                    format: wgpu::VertexFormat::Float32x3,
+                }
+            ],
+            step_mode: wgpu::VertexStepMode::Vertex,
+        }
+    }
+}
+
+const VERTICES: &[Vertex] = &[
+    Vertex { position: [0.0, 0.5, 0.0], color: [1.0, 0.0, 0.0]},
+    Vertex { position: [-0.5, -0.5, 0.0], color: [0.0, 1.0, 0.0]},
+    Vertex { position: [0.5, -0.5, 0.0], color: [0.0, 0.0, 1.0]},
+];
 
 pub struct App {
     #[cfg(target_arch="wasm32")]
@@ -161,9 +197,10 @@ pub struct State {
     is_surface_configured: bool,
     queue: wgpu::Queue,
     max_dim: u32, // Prevent panics in wgpu due to exceeded texture size
-    render_pipelines: Vec<wgpu::RenderPipeline>,
-    pipeline_selection: usize,
+    num_vertices: u32,
+    render_pipeline: wgpu::RenderPipeline,
     surface: wgpu::Surface<'static>,
+    vertex_buffer: wgpu::Buffer,
     window: Arc<Window>,
 }
 
@@ -238,13 +275,21 @@ impl State {
                 push_constant_ranges: &[],
             });
         
+        let vertex_buffer = device.create_buffer_init(
+            &wgpu::util::BufferInitDescriptor {
+                label: Some("vertex buffer"),
+                contents: bytemuck::cast_slice(VERTICES),
+                usage: wgpu::BufferUsages::VERTEX,
+            }
+        );
+
         let render_pipeline = device.create_render_pipeline(&wgpu::RenderPipelineDescriptor{
             label: Some("render pipeline"),
             layout: Some(&render_pipeline_layout),
             vertex: wgpu::VertexState {
                 module: &shader,
                 entry_point: Some("vs_main"),
-                buffers: &[],
+                buffers: &[Vertex::desc()],
                 compilation_options: wgpu::PipelineCompilationOptions::default(),
             },
             fragment: Some(wgpu::FragmentState {
@@ -276,43 +321,7 @@ impl State {
             cache: None,
         });
 
-        let render_pipeline_two = device.create_render_pipeline(&wgpu::RenderPipelineDescriptor{
-            label: Some("render pipeline two"),
-            layout: Some(&render_pipeline_layout),
-            vertex: wgpu::VertexState {
-                module: &shader,
-                entry_point: Some("vs2_main"),
-                buffers: &[],
-                compilation_options: wgpu::PipelineCompilationOptions::default(),
-            },
-            fragment: Some(wgpu::FragmentState {
-                module: &shader,
-                entry_point: Some("fs_main"),
-                targets: &[Some(wgpu::ColorTargetState {
-                    format: config.format,
-                    blend: Some(wgpu::BlendState::REPLACE),
-                    write_mask: wgpu::ColorWrites::ALL,
-                })],
-                compilation_options: wgpu::PipelineCompilationOptions::default(),
-            }),
-            depth_stencil: None,
-            primitive: wgpu::PrimitiveState {
-                topology: wgpu::PrimitiveTopology::TriangleList,
-                front_face: wgpu::FrontFace::Ccw,
-                cull_mode: Some(wgpu::Face::Back),
-                strip_index_format: None,
-                unclipped_depth: false,
-                polygon_mode: wgpu::PolygonMode::Fill,
-                conservative: false,
-            },
-            multisample: wgpu::MultisampleState {
-                count: 1,
-                mask: !0,
-                alpha_to_coverage_enabled: false,
-            },
-            multiview: None,
-            cache: None,
-        });
+        let num_vertices = VERTICES.len() as u32;
 
         Ok(Self {
             color: wgpu::Color {
@@ -326,9 +335,10 @@ impl State {
             is_surface_configured: false,
             queue,
             max_dim,
-            render_pipelines: vec!(render_pipeline, render_pipeline_two),
-            pipeline_selection: 0,
+            num_vertices,
+            render_pipeline: render_pipeline,
             surface,
+            vertex_buffer,
             window,
         })
     }
@@ -359,7 +369,6 @@ impl State {
     fn handle_key(&mut self, event_loop: &ActiveEventLoop, code: KeyCode, is_pressed: bool) {
         match (code, is_pressed) {
             (KeyCode::Escape, true) => event_loop.exit(),
-            (KeyCode::Space, true) => self.pipeline_selection = 1 - self.pipeline_selection,
             _ => {},
         }
     }
@@ -400,8 +409,9 @@ impl State {
             timestamp_writes: None,
         });
 
-        render_pass.set_pipeline(&self.render_pipelines[self.pipeline_selection]);
-        render_pass.draw(0..3, 0..1);
+        render_pass.set_pipeline(&self.render_pipeline);
+        render_pass.set_vertex_buffer(0, self.vertex_buffer.slice(..));
+        render_pass.draw(0..self.num_vertices, 0..1);
         drop(render_pass);
 
         self.queue.submit(std::iter::once(encoder.finish()));
